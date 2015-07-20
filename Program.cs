@@ -70,7 +70,12 @@
                 LogErrorWithTimeStamp("sqlite3_exec -> BEGIN TRANSACTION; failed to execute with SQLite error code: " + error);
             }
 
-            sqlite3_stmt* insertObjectsStmt, insertTypesStmt, insertRootsStmt;
+            sqlite3_stmt* insertObjectsStmt,
+                insertTypesStmt,
+                insertRootsStmt,
+                insertBlockingObjectsStmt,
+                insertExceptionsStmt,
+                insertThreadsStmt;
 
             if (!PrepareInsertStatement(db, out insertTypesStmt, @"INSERT INTO Types(TypeIndex, Count, Size, Name) VALUES (@1, @2, @3, @4);"))
             {
@@ -86,6 +91,23 @@
             {
                 return;
             }
+
+            if (!PrepareInsertStatement(db, out insertBlockingObjectsStmt, @"INSERT INTO BlockingObjects(ObjectId, Taken, RecursionCount, Owner, HasSingleOwner, ThreadOwnerIds, ThreadWaiterIds, BlockingReason) VALUES (@1, @2, @3, @4, @5, @6, @7, @8);"))
+            {
+                return;
+            }
+
+            /*
+            if (!PrepareInsertStatement(db, out insertExceptionsStmt, @"INSERT INTO Exceptions(ExceptionId, TypeId, Type, Message, Address, InnerExceptionId, HResult, StackId, StackTrace) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9);"))
+            {
+                return;
+            }*/
+
+            /*
+            if (!PrepareInsertStatement(db, out insertThreadsStmt, @"(GcMode, IsFinalizer, Address, IsAlive, OSThreadId, ManagedThreadId, AppDomain, LockCount, Teb, StackBase, StackLimit, StackId, ExceptionId, IsGC, IsDebuggerHelper, IsThreadpoolTimer, IsThreadpoolCompletionPort, IsThreadpoolWorker, IsThreadpoolWait, IsThreadpoolGate, IsSuspendingEE, IsShutdownHelper, IsAbortRequested, IsAborted, ISGCSuspendPending, IsDebugSuspended, IsBackground, IsUnstarted, IsCoInitialized, IsSTA, IsMTA, BlockingObjects, Roots) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9, @10);"))
+            {
+                return;
+            }*/
 
             LogInfoWithTimeStamp("Starting to populate Objects Table ...");
 
@@ -166,10 +188,36 @@
             }
 
             LogInfoWithTimeStamp("Successfully populated Roots Table.");
+            LogInfoWithTimeStamp("Starting to populate Blocking Objects Table ...");
+
+
+            foreach (var blockingObject in heap.EnumerateBlockingObjects())
+            {
+                NativeMethods.sqlite3_bind_int64(insertBlockingObjectsStmt, 1, (long)blockingObject.Object);
+                NativeMethods.sqlite3_bind_int64(insertBlockingObjectsStmt, 2, blockingObject.Taken ? 1 : 0);
+                NativeMethods.sqlite3_bind_int64(insertBlockingObjectsStmt, 3, blockingObject.RecursionCount);
+                NativeMethods.sqlite3_bind_int64(insertBlockingObjectsStmt, 4, blockingObject.Owner?.ManagedThreadId ?? -1);
+                NativeMethods.sqlite3_bind_int(insertBlockingObjectsStmt, 5, blockingObject.HasSingleOwner ? 1 : 0);
+
+                var owners = blockingObject.Owners.Expand();
+                NativeMethods.sqlite3_bind_text(insertBlockingObjectsStmt, 6, owners, owners.Length, NativeMethods.Transient);
+
+                var waiters = blockingObject.Waiters.Expand();
+                NativeMethods.sqlite3_bind_text(insertBlockingObjectsStmt, 7, waiters, waiters.Length, NativeMethods.Transient);
+
+                var blockingReason = blockingObject.Reason.KindString();
+                NativeMethods.sqlite3_bind_text(insertBlockingObjectsStmt, 8, blockingReason, blockingReason.Length, NativeMethods.Transient);
+
+                NativeMethods.sqlite3_step(insertBlockingObjectsStmt);
+                NativeMethods.sqlite3_reset(insertBlockingObjectsStmt);
+            }
+
+            LogInfoWithTimeStamp("Successfully populated Blocking Objects Table.");
 
             NativeMethods.sqlite3_finalize(insertTypesStmt);
             NativeMethods.sqlite3_finalize(insertObjectsStmt);
             NativeMethods.sqlite3_finalize(insertRootsStmt);
+            NativeMethods.sqlite3_finalize(insertBlockingObjectsStmt);
 
             error = NativeMethods.sqlite3_exec(db, "END TRANSACTION;", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             if (error != 0)
@@ -181,6 +229,42 @@
 
             watch.Stop();
             LogInfoWithTimeStamp("Processing time: " + watch.ElapsedMilliseconds + "  milliseconds");
+        }
+
+        private static string Expand(this IList<ClrThread> threads)
+        {
+            if (threads == null)
+            {
+                return "-1";
+            }
+
+            string threadList;
+
+            var count = threads.Count;
+            if (count > 0)
+            {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < count; ++i)
+                {
+                    if (threads[i] != null)
+                    {
+                        sb.Append(threads[i].ManagedThreadId);
+
+                        if (count - i != 1)
+                        {
+                            sb.Append(',');
+                        }
+                    }
+                }
+
+                threadList = sb.ToString();
+            }
+            else
+            {
+                threadList = "-1";
+            }
+
+            return threadList;
         }
 
         private static bool PrepareInsertStatement(sqlite3* db, out sqlite3_stmt* stmt, string sql)
@@ -249,6 +333,35 @@
             }
         }
 
+        private static string KindString(this BlockingReason kind)
+        {
+            switch (kind)
+            {
+                case BlockingReason.None:
+                    return "None";
+                case BlockingReason.Unknown:
+                    return "Unknown";
+                case BlockingReason.Monitor:
+                    return "Monitor";
+                case BlockingReason.MonitorWait:
+                    return "MonitorWait";
+                case BlockingReason.WaitOne:
+                    return "WaitOne";
+                case BlockingReason.WaitAll:
+                    return "WaitAll";
+                case BlockingReason.WaitAny:
+                    return "WaitAny";
+                case BlockingReason.ThreadJoin:
+                    return "ThreadJoin";
+                case BlockingReason.ReaderAcquired:
+                    return "ReaderAcquired";
+                case BlockingReason.WriterAcquired:
+                    return "WriterAcquired";
+                default:
+                    return "Unknown";
+            }
+        }
+
         private static bool CreateTables(sqlite3* db)
         {
             if (!CreateTable(db, @"CREATE TABLE Objects(ObjectId INTEGER PRIMARY KEY, TypeIndex INTEGER, Size INTEGER, ObjRefs TEXT);"))
@@ -262,6 +375,11 @@
             }
 
             if (!CreateTable(db, "CREATE TABLE Roots(TypeIndex INTEGER, ObjectId INTEGER, Address INTEGER, AppDomainId INTEGER, ManagedThreadId INTEGER, IsInterior BOOLEAN, IsPinned BOOLEAN, IsPossibleFalsePositive BOOLEAN, GCRootKind TEXT, Name TEXT);"))
+            {
+                return false;
+            }
+
+            if (!CreateTable(db, "CREATE TABLE BlockingObjects(ObjectId INTEGER, Taken BOOLEAN, RecursionCount INTEGER, Owner INTEGER, HasSingleOwner BOOL, ThreadOwnerIds TEXT, ThreadWaiterIds TEXT, BlockingReason TEXT);"))
             {
                 return false;
             }
