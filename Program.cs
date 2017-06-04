@@ -122,7 +122,7 @@
                 objectCount++;
                 if (objectCount % 10000 == 0)
                 {
-                    Console.WriteLine($"Enumerated objects: {objectCount}");
+                    LogInfoWithTimeStamp($"Enumerated objects: {objectCount}");
                 }
 
                 ClrType type = heap.GetObjectType(obj.Address);
