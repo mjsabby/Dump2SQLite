@@ -201,7 +201,6 @@
             LogInfoWithTimeStamp("Successfully populated Roots Table.");
             LogInfoWithTimeStamp("Starting to populate Blocking Objects Table ...");
 
-
             foreach (var blockingObject in heap.EnumerateBlockingObjects())
             {
                 NativeMethods.sqlite3_bind_int64(insertBlockingObjectsStmt, 1, (long)blockingObject.Object);
