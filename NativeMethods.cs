@@ -11,7 +11,7 @@
     {
     }
 
-    internal unsafe static class NativeMethods
+    internal static unsafe class NativeMethods
     {
         internal static IntPtr Transient = new IntPtr(-1);
 

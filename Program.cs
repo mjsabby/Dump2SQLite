@@ -3,19 +3,19 @@
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
-    using System.IO;
     using System.Text;
     using Microsoft.Diagnostics.Runtime;
 
-    internal unsafe static class Program
+    internal static unsafe class Program
     {
         private static void Main(string[] args)
         {
-            if (args.Length != 1)
+            if (args.Length != 2 || args.Length != 3)
             {
                 Console.WriteLine("@ Dump2SQLite - Serialize GCHeap to SQLite DB @");
-                Console.WriteLine(@"Usage: Dump2SQLite \path\to\filename.dmp");
-                Console.WriteLine(@"Output: SQLite DB (\path\to\filename.sqlite)");
+                Console.WriteLine(@"Usage: Dump2SQLite \path\to\filename.dmp [DacDllLocation]");
+                Console.WriteLine(@"Example 1: Dump2SQLite C:\w3wp.dmp");
+                Console.WriteLine(@"Example 2: Dump2SQLite C:\w3wp.dmp C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscordacwks.dll");
                 return;
             }
 
@@ -27,11 +27,21 @@
             LogInfoWithTimeStamp("Loading Crash Dump from: " + dumpLocation + " ...");
 
             DataTarget target = DataTarget.LoadCrashDump(dumpLocation);
-            ClrInfo version = target.ClrVersions[0]; // TODO: Probably add support for Multiple CLRs or at least warn we're picking the first
-            string dacLocation = version.TryGetDacLocation();
-            ClrRuntime runtime = target.CreateRuntime(dacLocation);
-            
-            var heap = runtime.GetHeap();
+            var dacLocation = target.ClrVersions[0].LocalMatchingDac;
+
+            if (args.Length == 3)
+            {
+                dacLocation = args[2];
+            }
+
+            if (!System.IO.File.Exists(dacLocation))
+            {
+                Console.WriteLine($"ERROR: Dac Location {dacLocation} does not exist, please point to DAC associated with dump, you can also try your local DAC (%WINDIR%\\Microsoft.NET\\Framework64\\v4.0.30319\\mscordacwks.dll)");
+            }
+
+            ClrRuntime runtime = target.ClrVersions[0].CreateRuntime(dacLocation, ignoreMismatch: true);
+
+            var heap = runtime.Heap;
             if (!heap.CanWalkHeap)
             {
                 LogErrorWithTimeStamp("Heap is not walkable. Please collect a new dump.");
@@ -40,9 +50,9 @@
 
             LogInfoWithTimeStamp("Crash Dump loaded.");
 
-            var perTypeCounts = new Dictionary<int, int>(100000);
-            
-            var fileName = Path.GetFullPath(args[0]).Replace(Path.GetExtension(args[0]), ".sqlite");
+            var perTypeCounts = new Dictionary<ClrType, int>(100000);
+
+            var fileName = args[1];
 
             LogInfoWithTimeStamp("Creating SQLite Database filename: " + fileName + " ...");
 
@@ -56,7 +66,7 @@
             LogInfoWithTimeStamp("Successfully created SQLite Database filename: " + fileName);
 
             LogInfoWithTimeStamp("Creating SQLite Tables ...");
-            
+
             if (!CreateTables(db))
             {
                 return;
@@ -70,12 +80,7 @@
                 LogErrorWithTimeStamp("sqlite3_exec -> BEGIN TRANSACTION; failed to execute with SQLite error code: " + error);
             }
 
-            sqlite3_stmt* insertObjectsStmt,
-                insertTypesStmt,
-                insertRootsStmt,
-                insertBlockingObjectsStmt,
-                insertExceptionsStmt,
-                insertThreadsStmt;
+            sqlite3_stmt* insertObjectsStmt, insertTypesStmt, insertRootsStmt, insertBlockingObjectsStmt, insertExceptionsStmt, insertThreadsStmt;
 
             if (!PrepareInsertStatement(db, out insertTypesStmt, @"INSERT INTO Types(TypeIndex, Count, Size, Name) VALUES (@1, @2, @3, @4);"))
             {
@@ -97,31 +102,37 @@
                 return;
             }
 
-            /*
             if (!PrepareInsertStatement(db, out insertExceptionsStmt, @"INSERT INTO Exceptions(ExceptionId, TypeId, Type, Message, Address, InnerExceptionId, HResult, StackId, StackTrace) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9);"))
             {
                 return;
-            }*/
+            }
 
-            /*
             if (!PrepareInsertStatement(db, out insertThreadsStmt, @"(GcMode, IsFinalizer, Address, IsAlive, OSThreadId, ManagedThreadId, AppDomain, LockCount, Teb, StackBase, StackLimit, StackId, ExceptionId, IsGC, IsDebuggerHelper, IsThreadpoolTimer, IsThreadpoolCompletionPort, IsThreadpoolWorker, IsThreadpoolWait, IsThreadpoolGate, IsSuspendingEE, IsShutdownHelper, IsAbortRequested, IsAborted, ISGCSuspendPending, IsDebugSuspended, IsBackground, IsUnstarted, IsCoInitialized, IsSTA, IsMTA, BlockingObjects, Roots) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9, @10);"))
             {
                 return;
-            }*/
+            }
 
             LogInfoWithTimeStamp("Starting to populate Objects Table ...");
 
+            long objectCount = 0;
+
             var walker = new ReferencesWalker();
-            foreach (ulong obj in heap.EnumerateObjects())
+            foreach (var obj in heap.EnumerateObjects())
             {
-                ClrType type = heap.GetObjectType(obj);
+                objectCount++;
+                if (objectCount % 10000 == 0)
+                {
+                    Console.WriteLine($"Enumerated objects: {objectCount}");
+                }
+
+                ClrType type = heap.GetObjectType(obj.Address);
                 if (type != null)
                 {
-                    type.EnumerateRefsOfObjectCarefully(obj, walker.Walk);
+                    type.EnumerateRefsOfObjectCarefully(obj.Address, walker.Walk);
                     var references = walker.ToString();
                     walker.Clear();
 
-                    int typeIndex = type.Index;
+                    var typeIndex = type;
                     if (perTypeCounts.ContainsKey(typeIndex))
                     {
                         ++perTypeCounts[typeIndex];
@@ -131,8 +142,8 @@
                         perTypeCounts.Add(typeIndex, 1);
                     }
 
-                    NativeMethods.sqlite3_bind_int64(insertObjectsStmt, 1, (long)obj);
-                    NativeMethods.sqlite3_bind_int(insertObjectsStmt, 2, typeIndex);
+                    NativeMethods.sqlite3_bind_int64(insertObjectsStmt, 1, (long)obj.Address);
+                    NativeMethods.sqlite3_bind_int64(insertObjectsStmt, 2, (long)type.MethodTable);
                     NativeMethods.sqlite3_bind_int(insertObjectsStmt, 3, type.BaseSize);
                     NativeMethods.sqlite3_bind_text(insertObjectsStmt, 4, references, references.Length, NativeMethods.Transient);
 
@@ -147,14 +158,14 @@
             foreach (var type in heap.EnumerateTypes())
             {
                 string typeName = type.Name;
-                int typeIndex = type.Index;
+                var typeIndex = type;
                 int count;
                 if (!perTypeCounts.TryGetValue(typeIndex, out count))
                 {
                     count = 0;
                 }
 
-                NativeMethods.sqlite3_bind_int(insertTypesStmt, 1, typeIndex);
+                NativeMethods.sqlite3_bind_int64(insertTypesStmt, 1, (long)type.MethodTable);
                 NativeMethods.sqlite3_bind_int64(insertTypesStmt, 2, count);
                 NativeMethods.sqlite3_bind_int(insertTypesStmt, 3, type.BaseSize);
                 NativeMethods.sqlite3_bind_text(insertTypesStmt, 4, typeName, typeName.Length, NativeMethods.Transient);
@@ -168,7 +179,7 @@
 
             foreach (var root in heap.EnumerateRoots())
             {
-                NativeMethods.sqlite3_bind_int(insertRootsStmt, 1, root.Type?.Index ?? -1);
+                NativeMethods.sqlite3_bind_int64(insertRootsStmt, 1, root.Type != null ? (long)root.Type.MethodTable : -1);
                 NativeMethods.sqlite3_bind_int64(insertRootsStmt, 2, (long)root.Object);
                 NativeMethods.sqlite3_bind_int64(insertRootsStmt, 3, (long)root.Address);
                 NativeMethods.sqlite3_bind_int(insertRootsStmt, 4, root.AppDomain?.Id ?? -1);
