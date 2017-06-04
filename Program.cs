@@ -13,9 +13,9 @@
             if (args.Length != 2 || args.Length != 3)
             {
                 Console.WriteLine("@ Dump2SQLite - Serialize GCHeap to SQLite DB @");
-                Console.WriteLine(@"Usage: Dump2SQLite \path\to\filename.dmp [DacDllLocation]");
-                Console.WriteLine(@"Example 1: Dump2SQLite C:\w3wp.dmp");
-                Console.WriteLine(@"Example 2: Dump2SQLite C:\w3wp.dmp C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscordacwks.dll");
+                Console.WriteLine(@"Usage: Dump2SQLite \path\to\filename.dmp \path\to\outputfile.db [DacDllLocation]");
+                Console.WriteLine(@"Example 1: Dump2SQLite C:\w3wp.dmp C:\w3wp.db");
+                Console.WriteLine(@"Example 2: Dump2SQLite C:\w3wp.dmp C:\w3wp.db C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscordacwks.dll");
                 return;
             }
 
