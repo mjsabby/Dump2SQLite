@@ -10,7 +10,7 @@
     {
         private static void Main(string[] args)
         {
-            if (args.Length != 2 || args.Length != 3)
+            if (args.Length < 2)
             {
                 Console.WriteLine("@ Dump2SQLite - Serialize GCHeap to SQLite DB @");
                 Console.WriteLine(@"Usage: Dump2SQLite \path\to\filename.dmp \path\to\outputfile.db [DacDllLocation]");
@@ -53,6 +53,11 @@
             var perTypeCounts = new Dictionary<ClrType, int>(100000);
 
             var fileName = args[1];
+
+            if (System.IO.File.Exists(fileName))
+            {
+                System.IO.File.Delete(fileName);
+            }
 
             LogInfoWithTimeStamp("Creating SQLite Database filename: " + fileName + " ...");
 
@@ -102,6 +107,7 @@
                 return;
             }
 
+            /*
             if (!PrepareInsertStatement(db, out insertExceptionsStmt, @"INSERT INTO Exceptions(ExceptionId, TypeId, Type, Message, Address, InnerExceptionId, HResult, StackId, StackTrace) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9);"))
             {
                 return;
@@ -111,6 +117,7 @@
             {
                 return;
             }
+            */
 
             LogInfoWithTimeStamp("Starting to populate Objects Table ...");
 
