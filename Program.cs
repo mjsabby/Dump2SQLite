@@ -8,6 +8,10 @@
 
     internal static unsafe class Program
     {
+        private static ulong currentObjectBeingTraversed = 0;
+
+        private static sqlite3_stmt* insertObjectReferencesStmt;
+
         private static void Main(string[] args)
         {
             if (args.Length < 2)
@@ -36,10 +40,10 @@
 
             if (!System.IO.File.Exists(dacLocation))
             {
-                Console.WriteLine($"ERROR: Dac Location {dacLocation} does not exist, please point to DAC associated with dump, you can also try your local DAC (%WINDIR%\\Microsoft.NET\\Framework64\\v4.0.30319\\mscordacwks.dll)");
+                Console.WriteLine($"ERROR: Dac Location {dacLocation} does not exist, please point to DAC associated with the dump, you can also try your local DAC (%WINDIR%\\Microsoft.NET\\Framework64\\v4.0.30319\\mscordacwks.dll)");
             }
 
-            ClrRuntime runtime = target.ClrVersions[0].CreateRuntime(dacLocation, ignoreMismatch: true);
+            var runtime = target.ClrVersions[0].CreateRuntime(dacLocation, ignoreMismatch: true);
 
             var heap = runtime.Heap;
             if (!heap.CanWalkHeap)
@@ -50,7 +54,7 @@
 
             LogInfoWithTimeStamp("Crash Dump loaded.");
 
-            var perTypeCounts = new Dictionary<ClrType, int>(100000);
+            var perTypeCounts = new Dictionary<ClrType, int>(1000000);
 
             var fileName = args[1];
 
@@ -92,7 +96,12 @@
                 return;
             }
 
-            if (!PrepareInsertStatement(db, out insertObjectsStmt, @"INSERT INTO Objects(ObjectId, TypeIndex, Size, ObjRefs) VALUES (@1, @2, @3, @4);"))
+            if (!PrepareInsertStatement(db, out insertObjectsStmt, @"INSERT INTO Objects(ObjectId, TypeIndex, Size) VALUES (@1, @2, @3);"))
+            {
+                return;
+            }
+
+            if (!PrepareInsertStatement(db, out insertObjectReferencesStmt, @"INSERT INTO ObjectReferences(ObjectId, ObjectReference) VALUES (@1, @2);"))
             {
                 return;
             }
@@ -122,22 +131,20 @@
             LogInfoWithTimeStamp("Starting to populate Objects Table ...");
 
             long objectCount = 0;
-
-            var walker = new ReferencesWalker();
+            var objRefWalk = new Action<ulong, int>(ObjRefWalk);
             foreach (var obj in heap.EnumerateObjects())
             {
                 objectCount++;
-                if (objectCount % 10000 == 0)
+                if (objectCount % 1000000 == 0)
                 {
                     LogInfoWithTimeStamp($"Enumerated objects: {objectCount}");
                 }
 
-                ClrType type = heap.GetObjectType(obj.Address);
+                var type = heap.GetObjectType(obj.Address);
                 if (type != null)
                 {
-                    type.EnumerateRefsOfObjectCarefully(obj.Address, walker.Walk);
-                    var references = walker.ToString();
-                    walker.Clear();
+                    currentObjectBeingTraversed = obj.Address;
+                    type.EnumerateRefsOfObject(obj.Address, objRefWalk);
 
                     var typeIndex = type;
                     if (perTypeCounts.ContainsKey(typeIndex))
@@ -152,7 +159,6 @@
                     NativeMethods.sqlite3_bind_int64(insertObjectsStmt, 1, (long)obj.Address);
                     NativeMethods.sqlite3_bind_int64(insertObjectsStmt, 2, (long)type.MethodTable);
                     NativeMethods.sqlite3_bind_int(insertObjectsStmt, 3, type.BaseSize);
-                    NativeMethods.sqlite3_bind_text(insertObjectsStmt, 4, references, references.Length, NativeMethods.Transient);
 
                     NativeMethods.sqlite3_step(insertObjectsStmt);
                     NativeMethods.sqlite3_reset(insertObjectsStmt);
@@ -246,6 +252,15 @@
 
             watch.Stop();
             LogInfoWithTimeStamp("Processing time: " + watch.ElapsedMilliseconds + "  milliseconds");
+        }
+
+        private static void ObjRefWalk(ulong address, int fieldOffset)
+        {
+            NativeMethods.sqlite3_bind_int64(insertObjectReferencesStmt, 1, (long)currentObjectBeingTraversed);
+            NativeMethods.sqlite3_bind_int64(insertObjectReferencesStmt, 2, (long)address);
+
+            NativeMethods.sqlite3_step(insertObjectReferencesStmt);
+            NativeMethods.sqlite3_reset(insertObjectReferencesStmt);
         }
 
         private static string Expand(this IList<ClrThread> threads)
@@ -381,7 +396,12 @@
 
         private static bool CreateTables(sqlite3* db)
         {
-            if (!CreateTable(db, @"CREATE TABLE Objects(ObjectId INTEGER PRIMARY KEY, TypeIndex INTEGER, Size INTEGER, ObjRefs TEXT);"))
+            if (!CreateTable(db, @"CREATE TABLE Objects(ObjectId INTEGER PRIMARY KEY, TypeIndex INTEGER, Size INTEGER);"))
+            {
+                return false;
+            }
+
+            if (!CreateTable(db, @"CREATE TABLE ObjectReferences(ObjectId INTEGER PRIMARY KEY, ObjectReference INTEGER);"))
             {
                 return false;
             }
@@ -412,40 +432,6 @@
         private static void LogInfoWithTimeStamp(string message)
         {
             Console.WriteLine("[INFO][{0}]: {1}", DateTime.Now, message);
-        }
-
-        private sealed class ReferencesWalker
-        {
-            private readonly List<ulong> References = new List<ulong>(100);
-
-            private readonly StringBuilder sb = new StringBuilder(1024 * 10);
-
-            public void Walk(ulong @object, int fieldOffset)
-            {
-                this.References.Add(@object);
-            }
-
-            public void Clear()
-            {
-                this.References.Clear();
-                this.sb.Clear();
-            }
-
-            public override string ToString()
-            {
-                int count = this.References.Count;
-                for (int i = 0; i < count; ++i)
-                {
-                    this.sb.Append(this.References[i]);
-
-                    if (count - i != 1)
-                    {
-                        this.sb.Append(',');
-                    }
-                }
-
-                return this.sb.ToString();
-            }
         }
     }
 }
