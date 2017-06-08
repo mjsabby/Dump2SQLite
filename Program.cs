@@ -91,12 +91,12 @@
 
             sqlite3_stmt* insertObjectsStmt, insertTypesStmt, insertRootsStmt, insertBlockingObjectsStmt;
 
-            if (!PrepareInsertStatement(db, out insertTypesStmt, @"INSERT INTO Types(TypeIndex, Count, Size, Name) VALUES (@1, @2, @3, @4);"))
+            if (!PrepareInsertStatement(db, out insertTypesStmt, @"INSERT INTO Types(TypeId, Count, Size, Name) VALUES (@1, @2, @3, @4);"))
             {
                 return;
             }
 
-            if (!PrepareInsertStatement(db, out insertObjectsStmt, @"INSERT INTO Objects(ObjectId, TypeIndex, Size) VALUES (@1, @2, @3);"))
+            if (!PrepareInsertStatement(db, out insertObjectsStmt, @"INSERT INTO Objects(ObjectId, TypeId, Size) VALUES (@1, @2, @3);"))
             {
                 return;
             }
@@ -106,7 +106,7 @@
                 return;
             }
 
-            if (!PrepareInsertStatement(db, out insertRootsStmt, @"INSERT INTO Roots(TypeIndex, ObjectId, Address, AppDomainId, ManagedThreadId, IsInterior, IsPinned, IsPossibleFalsePositive, GCRootKind, Name) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9, @10);"))
+            if (!PrepareInsertStatement(db, out insertRootsStmt, @"INSERT INTO Roots(TypeId, ObjectId, Address, AppDomainId, ManagedThreadId, IsInterior, IsPinned, IsPossibleFalsePositive, GCRootKind, Name) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9, @10);"))
             {
                 return;
             }
@@ -134,14 +134,13 @@
                     currentObjectBeingTraversed = obj.Address;
                     type.EnumerateRefsOfObject(obj.Address, objRefWalk);
 
-                    var typeIndex = type;
-                    if (perTypeCounts.ContainsKey(typeIndex))
+                    if (perTypeCounts.ContainsKey(type))
                     {
-                        ++perTypeCounts[typeIndex];
+                        ++perTypeCounts[type];
                     }
                     else
                     {
-                        perTypeCounts.Add(typeIndex, 1);
+                        perTypeCounts.Add(type, 1);
                     }
 
                     NativeMethods.sqlite3_bind_int64(insertObjectsStmt, 1, (long)obj.Address);
@@ -159,9 +158,8 @@
             foreach (var type in heap.EnumerateTypes())
             {
                 string typeName = type.Name;
-                var typeIndex = type;
                 int count;
-                if (!perTypeCounts.TryGetValue(typeIndex, out count))
+                if (!perTypeCounts.TryGetValue(type, out count))
                 {
                     count = 0;
                 }
@@ -387,7 +385,12 @@
 
         private static bool CreateTables(sqlite3* db)
         {
-            if (!CreateTable(db, @"CREATE TABLE Objects(ObjectId INTEGER PRIMARY KEY, TypeIndex INTEGER, Size INTEGER);"))
+            if (!CreateTable(db, @"CREATE TABLE Objects(ObjectId INTEGER PRIMARY KEY, TypeId INTEGER, Size INTEGER);"))
+            {
+                return false;
+            }
+
+            if (!CreateTable(db, @"CREATE INDEX `TypeIndex` ON `Objects` (`TypeId` ASC);"))
             {
                 return false;
             }
@@ -397,17 +400,17 @@
                 return false;
             }
 
-            if (!CreateTable(db, @"CREATE INDEX `ObjRefIndex` ON `ObjectReferences` (`ObjectReference` ASC)"))
+            if (!CreateTable(db, @"CREATE INDEX `ObjRefIndex` ON `ObjectReferences` (`ObjectReference` ASC);"))
             {
                 return false;
             }
 
-            if (!CreateTable(db, @"CREATE TABLE Types(TypeIndex INTEGER PRIMARY KEY, Count INTEGER, Size INTEGER, Name TEXT);"))
+            if (!CreateTable(db, @"CREATE TABLE Types(TypeId INTEGER PRIMARY KEY, Count INTEGER, Size INTEGER, Name TEXT);"))
             {
                 return false;
             }
 
-            if (!CreateTable(db, "CREATE TABLE Roots(TypeIndex INTEGER, ObjectId INTEGER, Address INTEGER, AppDomainId INTEGER, ManagedThreadId INTEGER, IsInterior BOOLEAN, IsPinned BOOLEAN, IsPossibleFalsePositive BOOLEAN, GCRootKind TEXT, Name TEXT);"))
+            if (!CreateTable(db, "CREATE TABLE Roots(TypeId INTEGER, ObjectId INTEGER, Address INTEGER, AppDomainId INTEGER, ManagedThreadId INTEGER, IsInterior BOOLEAN, IsPinned BOOLEAN, IsPossibleFalsePositive BOOLEAN, GCRootKind TEXT, Name TEXT);"))
             {
                 return false;
             }
