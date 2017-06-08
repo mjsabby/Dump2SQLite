@@ -406,6 +406,11 @@
                 return false;
             }
 
+            if (!CreateTable(db, @"CREATE INDEX `ObjRefIndex` ON `ObjectReferences` (`ObjectReference` ASC)"))
+            {
+                return false;
+            }
+
             if (!CreateTable(db, @"CREATE TABLE Types(TypeIndex INTEGER PRIMARY KEY, Count INTEGER, Size INTEGER, Name TEXT);"))
             {
                 return false;
