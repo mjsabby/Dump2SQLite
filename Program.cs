@@ -178,13 +178,16 @@
                     count = 0;
                 }
 
-                NativeMethods.sqlite3_bind_int64(insertTypesStmt, 1, (long)type.MethodTable);
-                NativeMethods.sqlite3_bind_int64(insertTypesStmt, 2, count);
-                NativeMethods.sqlite3_bind_int(insertTypesStmt, 3, type.BaseSize);
-                NativeMethods.sqlite3_bind_text(insertTypesStmt, 4, typeName, typeName.Length, NativeMethods.Transient);
+                if (count > 0)
+                {
+                    NativeMethods.sqlite3_bind_int64(insertTypesStmt, 1, (long)type.MethodTable);
+                    NativeMethods.sqlite3_bind_int64(insertTypesStmt, 2, count);
+                    NativeMethods.sqlite3_bind_int(insertTypesStmt, 3, type.BaseSize);
+                    NativeMethods.sqlite3_bind_text(insertTypesStmt, 4, typeName, typeName.Length, NativeMethods.Transient);
 
-                NativeMethods.sqlite3_step(insertTypesStmt);
-                NativeMethods.sqlite3_reset(insertTypesStmt);
+                    NativeMethods.sqlite3_step(insertTypesStmt);
+                    NativeMethods.sqlite3_reset(insertTypesStmt);
+                }
             }
 
             LogInfoWithTimeStamp("Successfully populated Types Table.");
