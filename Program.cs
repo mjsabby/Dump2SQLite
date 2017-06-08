@@ -8,7 +8,7 @@
 
     internal static unsafe class Program
     {
-        private static ulong currentObjectBeingTraversed = 0;
+        private static ulong currentObjectBeingTraversed;
 
         private static sqlite3_stmt* insertObjectReferencesStmt;
 
@@ -89,7 +89,7 @@
                 LogErrorWithTimeStamp("sqlite3_exec -> BEGIN TRANSACTION; failed to execute with SQLite error code: " + error);
             }
 
-            sqlite3_stmt* insertObjectsStmt, insertTypesStmt, insertRootsStmt, insertBlockingObjectsStmt, insertExceptionsStmt, insertThreadsStmt;
+            sqlite3_stmt* insertObjectsStmt, insertTypesStmt, insertRootsStmt, insertBlockingObjectsStmt;
 
             if (!PrepareInsertStatement(db, out insertTypesStmt, @"INSERT INTO Types(TypeIndex, Count, Size, Name) VALUES (@1, @2, @3, @4);"))
             {
@@ -115,18 +115,6 @@
             {
                 return;
             }
-
-            /*
-            if (!PrepareInsertStatement(db, out insertExceptionsStmt, @"INSERT INTO Exceptions(ExceptionId, TypeId, Type, Message, Address, InnerExceptionId, HResult, StackId, StackTrace) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9);"))
-            {
-                return;
-            }
-
-            if (!PrepareInsertStatement(db, out insertThreadsStmt, @"(GcMode, IsFinalizer, Address, IsAlive, OSThreadId, ManagedThreadId, AppDomain, LockCount, Teb, StackBase, StackLimit, StackId, ExceptionId, IsGC, IsDebuggerHelper, IsThreadpoolTimer, IsThreadpoolCompletionPort, IsThreadpoolWorker, IsThreadpoolWait, IsThreadpoolGate, IsSuspendingEE, IsShutdownHelper, IsAbortRequested, IsAborted, ISGCSuspendPending, IsDebugSuspended, IsBackground, IsUnstarted, IsCoInitialized, IsSTA, IsMTA, BlockingObjects, Roots) VALUES (@1, @2, @3, @4, @5, @6, @7, @8, @9, @10);"))
-            {
-                return;
-            }
-            */
 
             LogInfoWithTimeStamp("Starting to populate Objects Table ...");
 
