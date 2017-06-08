@@ -390,11 +390,6 @@
                 return false;
             }
 
-            if (!CreateTable(db, @"CREATE INDEX `TypeIndex` ON `Objects` (`TypeId` ASC);"))
-            {
-                return false;
-            }
-
             if (!CreateTable(db, @"CREATE TABLE ObjectReferences(ObjectId INTEGER PRIMARY KEY, ObjectReference INTEGER);"))
             {
                 return false;
